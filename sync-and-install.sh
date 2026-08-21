@@ -87,7 +87,19 @@ VERSION="${LATEST_VERSION}-think.$(date +%Y%m%d%H%M)"
 echo "==> building $VERSION"
 (cd packages/opencode && OPENCODE_VERSION="$VERSION" bun run build --single --skip-install)
 
-BUILT="packages/opencode/dist/opencode-linux-x64/bin/opencode"
+# build.ts --single emits dist/opencode-<os>-<arch>/, named after the host platform.
+case "$(uname -s)" in
+  Darwin) BUILD_OS="darwin" ;;
+  Linux) BUILD_OS="linux" ;;
+  *) echo "error: unsupported OS $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  arm64 | aarch64) BUILD_ARCH="arm64" ;;
+  x86_64) BUILD_ARCH="x64" ;;
+  *) echo "error: unsupported arch $(uname -m)" >&2; exit 1 ;;
+esac
+
+BUILT="packages/opencode/dist/opencode-${BUILD_OS}-${BUILD_ARCH}/bin/opencode"
 [[ -f "$BUILT" ]] || { echo "error: build artifact missing at $BUILT" >&2; exit 1; }
 
 echo "==> installing to $TARGET"
