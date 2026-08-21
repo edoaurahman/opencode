@@ -61,6 +61,37 @@ describe("splitThinkBlocks", () => {
     expect(splitThinkBlocks(input).text).toBe(input)
   })
 
+  test("keeps tags inside inline code spans", () => {
+    const input = "7 fix, tak satupun soal `<think>` tag:\nsisa kalimat"
+    const result = splitThinkBlocks(input)
+    expect(result.reasoning).toBe("")
+    expect(result.text).toBe(input)
+  })
+
+  test("keeps tags inside multi-backtick spans", () => {
+    const input = "pakai ``<think>`` di sini"
+    expect(splitThinkBlocks(input).text).toBe(input)
+  })
+
+  test("keeps a whole block literal when wrapped in one span", () => {
+    const input = "`<think>a</think>` tetap literal"
+    const result = splitThinkBlocks(input)
+    expect(result.reasoning).toBe("")
+    expect(result.text).toBe(input)
+  })
+
+  test("still splits real tags on a line that also has code spans", () => {
+    const result = splitThinkBlocks("`code` <think>reason</think> answer")
+    expect(result.reasoning).toBe("reason")
+    expect(result.text).toBe("`code`  answer")
+  })
+
+  test("treats an unmatched backtick as ordinary text", () => {
+    const result = splitThinkBlocks("ini ` lalu <think>real</think>after")
+    expect(result.reasoning).toBe("real")
+    expect(result.text).toBe("ini ` lalu after")
+  })
+
   test("handles nested tags", () => {
     const result = splitThinkBlocks("<think>outer<think>inner</think>tail</think>answer")
     expect(result.reasoning).toBe("outerinnertail")

@@ -42,13 +42,18 @@ export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks 
       continue
     }
 
+    const spans = line.includes("`") ? codeSpans(line) : []
+
     TAG_RE.lastIndex = 0
     let cursor = 0
     let match: RegExpExecArray | null
     while ((match = TAG_RE.exec(line))) {
-      emit(line.slice(cursor, match.index))
-      cursor = match.index + match[0].length
-      if (match[1] === "/") {
+      const tag = match
+      // Leave the tag in the pending slice so it is emitted as literal text.
+      if (spans.some((span) => tag.index >= span.start && tag.index < span.end)) continue
+      emit(line.slice(cursor, tag.index))
+      cursor = tag.index + tag[0].length
+      if (tag[1] === "/") {
         if (depth > 0) {
           depth--
           continue
@@ -71,4 +76,41 @@ export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks 
 
 export function stripThinkTags(input: string | undefined | null): string {
   return splitThinkBlocks(input).text
+}
+
+// Inline code spans keep tags literal, so `<think>` in prose must not open a
+// block. Per CommonMark a run of N backticks is closed by the next run of
+// exactly N; an unmatched run is ordinary text and opens nothing.
+function codeSpans(line: string) {
+  const spans: { start: number; end: number }[] = []
+  let index = 0
+
+  while (index < line.length) {
+    if (line[index] !== "`") {
+      index++
+      continue
+    }
+
+    const open = index
+    while (line[index] === "`") index++
+    const width = index - open
+
+    let cursor = index
+    while (cursor < line.length) {
+      if (line[cursor] !== "`") {
+        cursor++
+        continue
+      }
+      const close = cursor
+      while (line[cursor] === "`") cursor++
+      if (cursor - close === width) {
+        spans.push({ start: open, end: cursor })
+        index = cursor
+        break
+      }
+    }
+    if (cursor >= line.length) return spans
+  }
+
+  return spans
 }
