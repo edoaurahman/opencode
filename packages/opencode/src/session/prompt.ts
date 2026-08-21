@@ -54,6 +54,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
+import { SessionRetry } from "./retry"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
 
@@ -97,6 +98,24 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   // cleanup() marks abandoned tool_use blocks this way after retries/aborts.
   // They are not pending work and must not trigger an assistant-prefill request.
   return part.state.status === "error" && part.state.metadata?.interrupted === true
+}
+
+const EMPTY_STREAM_MAX_RETRIES = 2
+
+// Some providers (and proxies in front of them) close the SSE stream cleanly
+// mid-turn without ever emitting text or a tool call. The AI SDK reports that
+// as finish reason "unknown" with zero usage, so no error is thrown and the
+// retry policy in the processor never sees a failure. The turn ends silently
+// with nothing the user can act on. Detect that exact shape - finish
+// "unknown", no assistant text, no tool call - so the loop can request the
+// turn again instead of going idle.
+function isEmptyUnknownFinish(info: SessionV1.Assistant | undefined, parts: SessionV1.Part[] | undefined) {
+  if (info?.finish !== "unknown") return false
+  if (info.error) return false
+  if (!parts) return false
+  return !parts.some(
+    (part) => (part.type === "text" && part.text.trim() !== "") || (part.type === "tool" && !isOrphanedInterruptedTool(part)),
+  )
 }
 
 export interface Interface {
@@ -1083,6 +1102,7 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        let emptyStreamRetries = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1108,12 +1128,45 @@ const layer = Layer.effect(
               (part) => part.type === "tool" && !part.metadata?.providerExecuted && !isOrphanedInterruptedTool(part),
             ) ?? false
 
+          const emptyStream =
+            lastAssistant !== undefined &&
+            lastAssistant.parentID === lastUser.id &&
+            isEmptyUnknownFinish(lastAssistant, lastAssistantMsg?.parts)
+
+          if (emptyStream && emptyStreamRetries < EMPTY_STREAM_MAX_RETRIES) {
+            emptyStreamRetries++
+            yield* Effect.logWarning("retrying empty provider stream", {
+              "session.id": sessionID,
+              messageID: lastAssistant.id,
+              attempt: emptyStreamRetries,
+            })
+            // Drop the empty turn so it is not replayed to the model as an
+            // assistant message containing only reasoning, which some providers
+            // reject and which would otherwise grow the context on every retry.
+            yield* sessions.removeMessage({ sessionID, messageID: lastAssistant.id })
+            yield* status.set(sessionID, {
+              type: "retry",
+              attempt: emptyStreamRetries,
+              message: "Provider returned an empty response",
+              next: Date.now() + SessionRetry.delay(emptyStreamRetries),
+            })
+            yield* Effect.sleep(SessionRetry.delay(emptyStreamRetries))
+            continue
+          }
+
           if (
             lastAssistant?.finish &&
             !["tool-calls"].includes(lastAssistant.finish) &&
             !hasToolCalls &&
             lastAssistant.parentID === lastUser.id
           ) {
+            if (emptyStream) {
+              lastAssistant.error = new NamedError.Unknown({
+                message: `Provider returned an empty response ${EMPTY_STREAM_MAX_RETRIES + 1} times`,
+              }).toObject()
+              yield* sessions.updateMessage(lastAssistant)
+              yield* events.publish(Session.Event.Error, { sessionID, error: lastAssistant.error })
+            }
             const orphan = lastAssistantMsg?.parts.find(
               (part): part is SessionV1.ToolPart => part.type === "tool" && isOrphanedInterruptedTool(part),
             )
