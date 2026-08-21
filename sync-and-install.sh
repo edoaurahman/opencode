@@ -11,9 +11,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH="fix/render-think-tags-as-reasoning"
-TARGET="${OPENCODE_INSTALL_DIR:-$HOME/.local/bin}/opencode"
+# Install over the official location so this build wins regardless of PATH order.
+TARGET="${OPENCODE_INSTALL_DIR:-$HOME/.opencode/bin}/opencode"
 UPSTREAM="upstream"
 UPSTREAM_URL="https://github.com/anomalyco/opencode.git"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 
 MODE="sync"
 case "${1:-}" in
@@ -104,10 +106,58 @@ esac
 BUILT="packages/opencode/dist/opencode-${BUILD_OS}-${BUILD_ARCH}/bin/opencode"
 [[ -f "$BUILT" ]] || { echo "error: build artifact missing at $BUILT" >&2; exit 1; }
 
+# Built-in autoupdate detects this install path as "curl" and would silently
+# replace the custom build with the official release, so it must stay off.
+echo "==> checking autoupdate config"
+CONFIG_FILE=""
+for name in opencode.json opencode.jsonc; do
+  [[ -f "$CONFIG_DIR/$name" ]] && { CONFIG_FILE="$CONFIG_DIR/$name"; break; }
+done
+
+if [[ -z "$CONFIG_FILE" ]]; then
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG_DIR/opencode.json" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false
+}
+JSON
+  echo "    created $CONFIG_DIR/opencode.json with autoupdate disabled"
+else
+  # jsonc-parser edits the single key in place, preserving comments and formatting.
+  (cd packages/core && CONFIG_FILE="$CONFIG_FILE" bun -e '
+    const { applyEdits, modify, parse } = await import("jsonc-parser")
+    const file = process.env.CONFIG_FILE
+    const text = await Bun.file(file).text()
+    const errors = []
+    const config = parse(text, errors, { allowTrailingComma: true })
+    if (errors.length || typeof config !== "object" || config === null) {
+      console.error(`error: cannot parse ${file}, set "autoupdate": false manually`)
+      process.exit(1)
+    }
+    if (config.autoupdate === false) {
+      console.log("    autoupdate already disabled")
+      process.exit(0)
+    }
+    await Bun.write(`${file}.bak`, text)
+    const edits = modify(text, ["autoupdate"], false, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+    })
+    await Bun.write(file, applyEdits(text, edits))
+    console.log(`    autoupdate disabled (backup at ${file}.bak)`)
+  ')
+fi
+
 echo "==> installing to $TARGET"
 mkdir -p "$(dirname "$TARGET")"
 install -m755 "$BUILT" "$TARGET"
 "$TARGET" --version
+
+# Earlier versions of this script installed here; a leftover copy can shadow the
+# real target depending on PATH order.
+STALE="$HOME/.local/bin/opencode"
+[[ "$STALE" != "$TARGET" && -e "$STALE" ]] &&
+  echo "note: stale binary at $STALE may shadow $TARGET, remove it with: rm $STALE"
 
 echo
 echo "done. push with: git push origin $BRANCH"
