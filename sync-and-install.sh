@@ -13,6 +13,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH="fix/render-think-tags-as-reasoning"
 TARGET="${OPENCODE_INSTALL_DIR:-$HOME/.local/bin}/opencode"
 UPSTREAM="upstream"
+UPSTREAM_URL="https://github.com/anomalyco/opencode.git"
 
 MODE="sync"
 case "${1:-}" in
@@ -24,8 +25,9 @@ esac
 
 cd "$REPO"
 
+# A fresh clone only has `origin`; add the release source on first run.
 git remote get-url "$UPSTREAM" >/dev/null 2>&1 ||
-  { echo "error: remote '$UPSTREAM' not configured" >&2; exit 1; }
+  { echo "==> adding remote '$UPSTREAM' -> $UPSTREAM_URL"; git remote add "$UPSTREAM" "$UPSTREAM_URL"; }
 
 echo "==> fetching $UPSTREAM tags"
 git fetch --quiet "$UPSTREAM" --tags
