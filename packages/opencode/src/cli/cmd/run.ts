@@ -25,6 +25,7 @@ import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { splitThinkBlocks } from "@opencode-ai/core/util/think"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -276,6 +277,18 @@ export const RunCommand = effectCmd({
       const die = (message: string): never => {
         UI.error(message)
         process.exit(1)
+      }
+      const printReasoning = (value: string) => {
+        const text = value.trim()
+        if (!text) return
+        const line = `Thinking: ${text}`
+        if (process.stdout.isTTY) {
+          UI.empty()
+          UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
+          UI.empty()
+          return
+        }
+        process.stdout.write(line + EOL)
       }
       const dieInteractive = (error: unknown): never => {
         if (error instanceof Error && error.message === INTERACTIVE_INPUT_ERROR) {
@@ -752,7 +765,11 @@ export const RunCommand = effectCmd({
 
               if (part.type === "text" && part.time?.end) {
                 if (emit("text", { part })) continue
-                const text = part.text.trim()
+                // Some providers inline reasoning as `<think>`/`<thinking>` tags
+                // inside the text part; surface it like a native reasoning part.
+                const blocks = splitThinkBlocks(part.text)
+                if (blocks.reasoning && thinking) printReasoning(blocks.reasoning)
+                const text = blocks.text
                 if (!text) continue
                 if (!process.stdout.isTTY) {
                   process.stdout.write(text + EOL)
@@ -765,16 +782,7 @@ export const RunCommand = effectCmd({
 
               if (part.type === "reasoning" && part.time?.end && thinking) {
                 if (emit("reasoning", { part })) continue
-                const text = part.text.trim()
-                if (!text) continue
-                const line = `Thinking: ${text}`
-                if (process.stdout.isTTY) {
-                  UI.empty()
-                  UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
-                  UI.empty()
-                  continue
-                }
-                process.stdout.write(line + EOL)
+                printReasoning(part.text)
               }
             }
 

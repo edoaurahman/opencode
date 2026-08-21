@@ -65,6 +65,7 @@ import { partDefaultOpen } from "./part-default-open"
 import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText } from "./message-part-text"
+import { splitThinkBlocks } from "@opencode-ai/core/util/think"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
 
 async function writeClipboard(text: string): Promise<boolean> {
@@ -1704,7 +1705,12 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof (props.message as AssistantMessage).time.completed !== "number",
   )
-  const text = () => readPartText(data.store.part_text_accum_delta, part())
+  const raw = () => readPartText(data.store.part_text_accum_delta, part())
+  // Providers that inline reasoning as `<think>`/`<thinking>` tags keep the raw
+  // text in storage for multi-turn context; split it out at display time.
+  const blocks = createMemo(() => splitThinkBlocks(raw()))
+  const reasoning = () => blocks().reasoning
+  const text = () => blocks().text
   const isLastTextPart = createMemo(() => {
     const last = (data.store.part?.[props.message.id] ?? [])
       .filter((item): item is TextPart => item?.type === "text" && !!item.text?.trim())
@@ -1729,29 +1735,38 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   }
 
   return (
-    <Show when={text()}>
-      <div data-component="text-part" data-timeline-part-id={part().id}>
-        <div data-slot="text-part-body">
-          <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
-        </div>
-        <Show when={showCopy()}>
-          <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
-            <MessageActionButton
-              icon={copied() ? "check" : "copy"}
-              label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyResponse")}
-              useV2={props.useV2Actions}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={handleCopy}
-              aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyResponse")}
-            />
-            <Show when={meta()}>
-              <span data-slot="text-part-meta" class="text-12-regular text-text-weak cursor-default">
-                {meta()}
-              </span>
+    <Show when={text() || reasoning()}>
+      <>
+        <Show when={reasoning()}>
+          <div data-component="reasoning-part" data-timeline-part-id={part().id}>
+            <PacedMarkdown text={reasoning()} cacheKey={part().id + ":reasoning"} streaming={streaming()} />
+          </div>
+        </Show>
+        <Show when={text()}>
+          <div data-component="text-part" data-timeline-part-id={part().id}>
+            <div data-slot="text-part-body">
+              <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
+            </div>
+            <Show when={showCopy()}>
+              <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
+                <MessageActionButton
+                  icon={copied() ? "check" : "copy"}
+                  label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyResponse")}
+                  useV2={props.useV2Actions}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={handleCopy}
+                  aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyResponse")}
+                />
+                <Show when={meta()}>
+                  <span data-slot="text-part-meta" class="text-12-regular text-text-weak cursor-default">
+                    {meta()}
+                  </span>
+                </Show>
+              </div>
             </Show>
           </div>
         </Show>
-      </div>
+      </>
     </Show>
   )
 }

@@ -74,6 +74,7 @@ import { setPreLayoutSiblingMargin } from "../../util/layout"
 import { useTuiConfig } from "../../config"
 import { useClipboard } from "../../context/clipboard"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
+import { splitThinkBlocks } from "@opencode-ai/core/util/think"
 import { getScrollAcceleration } from "../../util/scroll"
 import { collapseToolOutput } from "../../util/collapse-tool-output"
 import { usePluginRuntime } from "../../plugin/runtime"
@@ -1585,25 +1586,42 @@ const PART_MAPPING = {
 const INLINE_TOOL_ICON_WIDTH = 2
 
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
+  const content = createMemo(() => {
+    // OpenRouter encrypts some reasoning blocks; drop the placeholder.
+    return props.part.text.replace("[REDACTED]", "").trim()
+  })
+  // Reasoning is finalized when the server sets `time.end` (see processor.ts).
+  // Flips independently of the parent message completing.
+  const isDone = createMemo(() => props.part.time.end !== undefined)
+  const duration = createMemo(() => {
+    const end = props.part.time.end
+    return end === undefined ? 0 : Math.max(0, end - props.part.time.start)
+  })
+
+  return (
+    <ReasoningBlock
+      content={content()}
+      done={isDone()}
+      duration={duration()}
+      encrypted={!content() && Boolean(props.part.metadata)}
+    />
+  )
+}
+
+// Shared reasoning presentation used by both native reasoning parts and
+// `<think>` blocks that some providers inline into text parts.
+function ReasoningBlock(props: { content: string; done: boolean; duration?: number; encrypted?: boolean }) {
   const { theme } = useTheme()
   const ctx = use()
   // Collapsed by default in hide mode: a single line throughout, so the
   // layout never shifts. Click to open the full markdown block, click to close.
   const [expanded, setExpanded] = createSignal(false)
 
-  const content = createMemo(() => {
-    // OpenRouter encrypts some reasoning blocks; drop the placeholder.
-    return props.part.text.replace("[REDACTED]", "").trim()
-  })
-  const opaque = createMemo(() => !content() && Boolean(props.part.metadata))
-  // Reasoning is finalized when the server sets `time.end` (see processor.ts).
-  // Flips independently of the parent message completing.
-  const isDone = createMemo(() => props.part.time.end !== undefined)
+  const content = createMemo(() => props.content)
+  const opaque = createMemo(() => Boolean(props.encrypted))
+  const isDone = createMemo(() => props.done)
   const inMinimal = createMemo(() => ctx.thinkingMode() === "hide")
-  const duration = createMemo(() => {
-    const end = props.part.time.end
-    return end === undefined ? 0 : Math.max(0, end - props.part.time.start)
-  })
+  const duration = createMemo(() => props.duration ?? 0)
   const summary = createMemo(() => reasoningSummary(content()))
   const syntax = createSyntaxStyleMemo(() => generateSubtleSyntax(theme))
 
@@ -1687,21 +1705,31 @@ function ReasoningHeader(props: {
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  // Some providers inline reasoning as `<think>`/`<thinking>` tags inside the
+  // text part instead of emitting a dedicated reasoning part. Keep the raw text
+  // in storage (multi-turn context) but split it for display.
+  const blocks = createMemo(() => splitThinkBlocks(props.part.text))
+  const isDone = createMemo(() => props.part.time?.end !== undefined)
   return (
-    <Show when={props.part.text.trim()}>
-      <box ref={(el: BoxRenderable) => alwaysSeparate.add(el)} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <markdown
-          syntaxStyle={syntax()}
-          streaming={true}
-          internalBlockMode="top-level"
-          content={props.part.text.trim()}
-          tableOptions={{ style: "grid" }}
-          conceal={ctx.conceal()}
-          fg={theme.markdownText}
-          bg={theme.background}
-        />
-      </box>
-    </Show>
+    <>
+      <Show when={blocks().reasoning}>
+        <ReasoningBlock content={blocks().reasoning} done={isDone()} />
+      </Show>
+      <Show when={blocks().text}>
+        <box ref={(el: BoxRenderable) => alwaysSeparate.add(el)} paddingLeft={3} marginTop={1} flexShrink={0}>
+          <markdown
+            syntaxStyle={syntax()}
+            streaming={true}
+            internalBlockMode="top-level"
+            content={blocks().text}
+            tableOptions={{ style: "grid" }}
+            conceal={ctx.conceal()}
+            fg={theme.markdownText}
+            bg={theme.background}
+          />
+        </box>
+      </Show>
+    </>
   )
 }
 
