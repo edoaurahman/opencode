@@ -70,9 +70,17 @@ git checkout --quiet "$BRANCH"
 if git merge-base --is-ancestor "$LATEST_TAG" HEAD; then
   echo "==> $LATEST_TAG already merged"
 else
+  # In a partial clone, blobs are lazily fetched from the `origin` promisor, which
+  # does not have the new upstream release yet. Pull them from upstream first.
+  if [[ -n "$(git config --get-regexp 'remote\..*\.partialclonefilter' || true)" ]]; then
+    echo "==> partial clone: fetching $LATEST_TAG blobs from $UPSTREAM"
+    git fetch --quiet --no-filter "$UPSTREAM" tag "$LATEST_TAG"
+  fi
+
   echo "==> merging $LATEST_TAG into $BRANCH"
   if ! git merge "$LATEST_TAG" --no-edit; then
-    git merge --abort
+    # A blob-fetch failure aborts before MERGE_HEAD exists, so the abort may be a no-op.
+    git merge --abort 2>/dev/null || true
     echo "error: merge conflict with $LATEST_TAG, aborted. Resolve manually:" >&2
     echo "       git merge $LATEST_TAG   # then rerun $0 --force" >&2
     exit 1
