@@ -1708,7 +1708,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   const raw = () => readPartText(data.store.part_text_accum_delta, part())
   // Providers that inline reasoning as `<think>`/`<thinking>` tags keep the raw
   // text in storage for multi-turn context; split it out at display time.
-  const blocks = createMemo(() => splitThinkBlocks(raw()))
+  const blocks = createMemo(() => splitThinkBlocks(raw(), { done: part().time?.end !== undefined }))
   const reasoning = () => blocks().reasoning
   const text = () => blocks().text
   const isLastTextPart = createMemo(() => {

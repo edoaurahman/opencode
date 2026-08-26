@@ -767,7 +767,7 @@ export const RunCommand = effectCmd({
                 if (emit("text", { part })) continue
                 // Some providers inline reasoning as `<think>`/`<thinking>` tags
                 // inside the text part; surface it like a native reasoning part.
-                const blocks = splitThinkBlocks(part.text)
+                const blocks = splitThinkBlocks(part.text, { done: true })
                 if (blocks.reasoning && thinking) printReasoning(blocks.reasoning)
                 const text = blocks.text
                 if (!text) continue

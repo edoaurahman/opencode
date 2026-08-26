@@ -7,7 +7,7 @@ export type ThinkBlocks = {
   text: string
 }
 
-export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks {
+export function splitThinkBlocks(input: string | undefined | null, options?: { done?: boolean }): ThinkBlocks {
   const source = input ?? ""
   if (!source || !DETECT_RE.test(source)) return { reasoning: "", text: source }
 
@@ -17,6 +17,9 @@ export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks 
   let fence: string | null = null
   let sawOpen = false
   let hoisted = false
+  // Where the outermost still-open block started in `reasoning`, so a block the
+  // provider never closed can be handed back as text once the stream is done.
+  let openAt = -1
 
   const emit = (chunk: string) => {
     if (!chunk) return
@@ -56,6 +59,7 @@ export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks 
       if (tag[1] === "/") {
         if (depth > 0) {
           depth--
+          if (depth === 0) openAt = -1
           continue
         }
         if (!sawOpen && !hoisted) {
@@ -66,9 +70,18 @@ export function splitThinkBlocks(input: string | undefined | null): ThinkBlocks 
         continue
       }
       sawOpen = true
+      if (depth === 0) openAt = reasoning.length
       depth++
     }
     emit(line.slice(cursor))
+  }
+
+  // A finished turn with an unclosed block means the provider dropped the
+  // closing tag, so the answer is trapped inside it. Hand that tail back as
+  // text - merged with the reasoning, since nothing marks where one ends -
+  // rather than rendering an empty message.
+  if (options?.done && depth > 0 && openAt >= 0) {
+    for (const chunk of reasoning.splice(openAt, reasoning.length - openAt)) text.push(chunk)
   }
 
   return { reasoning: reasoning.join("").trim(), text: text.join("").trim() }

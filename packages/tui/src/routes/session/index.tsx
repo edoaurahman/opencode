@@ -1708,8 +1708,8 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
   // Some providers inline reasoning as `<think>`/`<thinking>` tags inside the
   // text part instead of emitting a dedicated reasoning part. Keep the raw text
   // in storage (multi-turn context) but split it for display.
-  const blocks = createMemo(() => splitThinkBlocks(props.part.text))
   const isDone = createMemo(() => props.part.time?.end !== undefined)
+  const blocks = createMemo(() => splitThinkBlocks(props.part.text, { done: isDone() }))
   return (
     <>
       <Show when={blocks().reasoning}>

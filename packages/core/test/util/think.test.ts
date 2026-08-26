@@ -43,6 +43,24 @@ describe("splitThinkBlocks", () => {
     expect(result.text).toBe("")
   })
 
+  test("recovers an unterminated block as text once the turn is done", () => {
+    const result = splitThinkBlocks("<think>reason then answer", { done: true })
+    expect(result.reasoning).toBe("")
+    expect(result.text).toBe("reason then answer")
+  })
+
+  test("keeps closed blocks as reasoning when the turn is done", () => {
+    const result = splitThinkBlocks("<think>reason</think>answer", { done: true })
+    expect(result.reasoning).toBe("reason")
+    expect(result.text).toBe("answer")
+  })
+
+  test("recovers only the unterminated tail when the turn is done", () => {
+    const result = splitThinkBlocks("<think>first</think>answer<think>trapped", { done: true })
+    expect(result.reasoning).toBe("first")
+    expect(result.text).toBe("answertrapped")
+  })
+
   test("hoists leading text when the opening tag was dropped", () => {
     const result = splitThinkBlocks("reason only</think>answer")
     expect(result.reasoning).toBe("reason only")
