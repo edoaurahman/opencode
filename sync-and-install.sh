@@ -78,7 +78,11 @@ else
   fi
 
   echo "==> merging $LATEST_TAG into $BRANCH"
-  if ! git merge "$LATEST_TAG" --no-edit; then
+  # Release tags are not ancestors of each other here, so every new tag
+  # conflicts with the previously merged one on package.json "version" fields.
+  # -X theirs resolves those in favor of upstream; the think fix is verified by
+  # the test + typecheck steps below, which fail loudly if it ever regresses.
+  if ! git merge "$LATEST_TAG" --no-edit -X theirs; then
     # A blob-fetch failure aborts before MERGE_HEAD exists, so the abort may be a no-op.
     git merge --abort 2>/dev/null || true
     echo "error: merge conflict with $LATEST_TAG, aborted. Resolve manually:" >&2
