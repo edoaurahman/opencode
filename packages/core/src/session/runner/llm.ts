@@ -202,6 +202,15 @@ const layer = Layer.effect(
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
       const toolMaterialization = isLastStep ? undefined : yield* tools.materialize(agent.info?.permissions)
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
+      // Anthropic models don't support assistant message prefill.
+      // Use system message + toolChoice: "none" instead of assistant prefill.
+      const supportsAssistantPrefill = model.provider !== "anthropic"
+      const systemParts = [agent.info?.system, system.baseline]
+        .filter((part): part is string => part !== undefined && part.length > 0)
+        .map(SystemPart.make)
+      if (isLastStep && !supportsAssistantPrefill) {
+        systemParts.push(SystemPart.make(MAX_STEPS_PROMPT))
+      }
       const request = LLM.request({
         model,
         http: {
@@ -212,12 +221,13 @@ const layer = Layer.effect(
           },
         },
         providerOptions: { openai: { promptCacheKey } },
-        system: [agent.info?.system, system.baseline]
-          .filter((part): part is string => part !== undefined && part.length > 0)
-          .map(SystemPart.make),
-        messages: [...toLLMMessages(context, model), ...(isLastStep ? [Message.assistant(MAX_STEPS_PROMPT)] : [])],
+        system: systemParts,
+        messages: [
+          ...toLLMMessages(context, model),
+          ...(isLastStep && supportsAssistantPrefill ? [Message.assistant(MAX_STEPS_PROMPT)] : []),
+        ],
         tools: toolMaterialization?.definitions ?? [],
-        toolChoice: isLastStep ? "none" : undefined,
+        toolChoice: isLastStep && !supportsAssistantPrefill ? "none" : undefined,
       })
       if (yield* compaction.compactIfNeeded({ sessionID: session.id, entries, model, request }))
         return yield* Effect.die(continueAfterCompaction(currentStep))

@@ -1322,6 +1322,12 @@ const layer = Layer.effect(
             ]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+            // Anthropic models don't support assistant message prefill.
+            // Use system message + toolChoice: "none" instead of assistant prefill.
+            const supportsAssistantPrefill = model.api.npm !== "@ai-sdk/anthropic"
+            if (isLastStep && !supportsAssistantPrefill) {
+              system.push(MAX_STEPS_PROMPT)
+            }
             const result = yield* handle.process({
               user: lastUser,
               agent,
@@ -1331,11 +1337,14 @@ const layer = Layer.effect(
               system,
               messages: [
                 ...modelMsgs,
-                ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
+                ...(isLastStep && supportsAssistantPrefill
+                  ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }]
+                  : []),
               ],
               tools,
               model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
+              toolChoice:
+                format.type === "json_schema" ? "required" : isLastStep && !supportsAssistantPrefill ? "none" : undefined,
             })
 
             if (structured !== undefined) {
